@@ -66,6 +66,7 @@ In this last section, we perform some refinement steps on the genotype calls (GQ
 
 The [Best Practices](http://www.broadinstitute.org/gatk/guide/best-practices) have been updated for GATK version 3. If you are running an older version, you should seriously consider upgrading. For more details about what has changed in each version, please see the [Version History](http://www.broadinstitute.org/gatk/guide/version-history) section. If you cannot upgrade your version of GATK for any reason, please look up the corresponding version of the GuideBook PDF (also in the [Version History](http://www.broadinstitute.org/gatk/guide/version-history) section) to ensure that you are using the appropriate recommendations for your version.
 
+------
 
 # [GATK最佳实践-基于全基因组和外显子测序检测Germline SNP & INDEL](http://rogerdudler.github.io/git-guide/index.zh.html)
 
