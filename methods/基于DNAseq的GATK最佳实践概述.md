@@ -67,91 +67,569 @@ In this last section, we perform some refinement steps on the genotype calls (GQ
 The [Best Practices](http://www.broadinstitute.org/gatk/guide/best-practices) have been updated for GATK version 3. If you are running an older version, you should seriously consider upgrading. For more details about what has changed in each version, please see the [Version History](http://www.broadinstitute.org/gatk/guide/version-history) section. If you cannot upgrade your version of GATK for any reason, please look up the corresponding version of the GuideBook PDF (also in the [Version History](http://www.broadinstitute.org/gatk/guide/version-history) section) to ensure that you are using the appropriate recommendations for your version.
 
 ------
+GATK最佳实践-基于全基因组和外显子测序检测Germline SNP & INDEL
 
-# [GATK最佳实践-基于全基因组和外显子测序检测Germline SNP & INDEL](http://rogerdudler.github.io/git-guide/index.zh.html)
+一、分析流程图
 
-## 一、分析流程图
+	基于全基因组或者外显子测序数据检测Germline SNP & INDEL, GATK官方推荐使用最佳实践(Best Practices)，分析流程如下图所示，主要分为三个部分：预处理（PRE-PROCESSING）、变异检测(VARIANT DISCOVERY)和优化变异集(CALLSET REFINEMENT)。
+二、预处理(PRE-PROCESSING)
 
-​	基于全基因组或者外显子测序数据检测Germline SNP & INDEL, GATK官方推荐使用最佳实践(Best Practices)，分析流程如下图所示，主要分为三个部分：预处理（PRE-PROCESSING）、发现变异(VARIANT DISCOVERY)和优化变异集(CALLSET REFINEMENT)。
+	预处理过程是整理分析流程的第一步，是非常必须的。开始于FASTQ或者其他非BAM格式的文件，结束于用于第二步分析前的准备好的BAM文件。
 
-![img](https://software.broadinstitute.org/gatk/img/BP_workflow_3.6.png)
+	大多数情况下，我们得到的测序数据为FASTQ格式，对于一个样品来说可能有一个或多个FASTQ文件，这样的数据是不能直接用于变异检测分析的。即使得到的是BAM格式的文件,为了最大化的技术正确性，你可能仍然需要做一些数据处理。
 
-## 二、预处理(PRE-PROCESSING)
+	首先需要将测序的数据比对到参考基因组上，产生SAM/BAM格式的文件；其次标记重复reads 减少偏好性，这些重复的reads可能来源于PCR实验扩增；最后我们较准碱基的质量值，因为变异检测的算法非常依赖于每一个read中每一个碱基的质量分值。
 
-​	预处理过程是整理分析流程的第一步，是非常必须的。开始于FASTQ或者其他非BAM格式的文件，结束于用于第二步分析前的准备好的BAM文件。
+1.比对参考基因组(Map to Reference)与标记重复(Mark Duplicates)
 
-​	大多数情况下，我们得到的测序数据为FASTQ格式，对于一个样品来说可能有一个或多个FASTQ文件，这样的数据是不能直接用于变异检测分析的。即使得到的是BAM格式的文件,为了最大化的技术正确性，你可能仍然需要做一些数据处理。
+	第一步我们首先将测序的reads比对到参考基因组上，产生SAM/BAM文件。对于DNA测序数据我们一般推荐BAW MEM，这个依赖于你的数据以及测序平台，你可以选择其他的比对工具。完成比对后，你需要确认比对结果是经过排序的。在这一过程中，你可以加入Read group的信息，也可以通过Picard AddOrReplaceReadGroups增加或者修改。
 
-​	首先需要将测序的数据比对到参考基因组上，产生SAM/BAM格式的文件；其次标记重复reads 减少偏好性，这些重复的reads可能来源于PCR实验扩增；最后我们较正碱基的质量值，因为变异检测的算法非常依赖于每一个read中每一个碱基的质量分值。
+	完成基因组比对后，接下来是标记重复，在测序的过程中，相同的DNA片段可能被测到多次，产生的重复reads没有更多的信息，也不能用于作为支持变异信息的证据，标记重复的过程，不是将reads过滤，而只是在检测出来重复的read，并加上一个重复标签（TAG）的信息。多数的GATK工具默认情况下是不使用这些reads信息。
 
-### 1.比对参考基因组(Map to Reference)与标记重复(Mark Duplicates)
+	标记重复不能用于扩增子测序数据，或者其他如设计的read的起始位置和终止位置一致的数据。
 
-​	第一步我们首先将测序的reads比对到参考基因组上，产生SAM/BAM文件。对于DNA测序数据我们一般推荐BAW MEM，这个依赖于你的数据以及测序平台，你可以选择其他的比对工具。完成比对后，你需要确认比对结果是经过排序的。在这一过程中，你可以加入Read group的信息，也可以通过Picard AddOrReplaceReadGroups增加或者修改。
+	这此过程中用到一些工具如BWA ,Picard 不属于GATK，所以我们不提供这些软件的详细文档，如果要了解更多，可以查看官网的文档页面。
 
-​	完成基因组比对后，接下来是标记重复，在测序的过程中，相同的DNA片段可能被测到多次，产生的重复reads没有更多的信息，也不能用于作为支持变异信息的证据，标记重复的过程，不是将reads过滤，而只是在检测出来重复的read，并加上一个重复标签（TAG）的信息。多数的GATK工具默认情况下是不使用这些reads信息。
+	下面我们将介绍一步步介绍如何比对和标记。
 
-​	这此过程中用到一些工具如BWA ,Picard 不属于GATK，所以我们不提供这些软件的详细文档，如果要了解更多，可以查看官网的文档页面。
+	首先要保证测序数据是过滤了接头信息。（测序数据最好是经过质量过滤-译者）
 
-​	下面我们将介绍一步步介绍如何比对和标记。
+1.确定read分组信息
 
-​	首先要保证测序数据是过滤了接头信息。（测序数据最好是经过质量过滤-译者）
-
-​	1.确定read分组信息
-
-​	read分组是下游GATK的关键信息，如果没有read的分组信息，GATK将不能正常使用，确保加入你所知道的read分组信息，更多信息可以查看SAM格式说明。
+	read分组是下游GATK的关键信息，如果没有read的分组信息，GATK将不能正常使用，确保加入你所知道的read分组信息，更多信息可以查看SAM格式说明。
 
 如下格式：
 
-```
-@RG\tID:group1\tSM:sample1\tPL:illumina\tLB:lib1\tPU:unit1 
-```
+    @RG\tID:group1\tSM:sample1\tPL:illumina\tLB:lib1\tPU:unit1 
 
 每一个元素之间使用“\t”分隔。
 
-​	2.生成read比对结果SAM文件
+2.生成read比对结果SAM文件
 
-​	使用BWA,命令行如下：
+	使用BWA,命令行如下：
 
-```
-bwa mem -M -R ’<read group info>’ -p reference.fa raw_reads.fq > aligned_reads.sam 
-```
+    bwa mem -M -R ’<read group info>’ -p reference.fa raw_reads.fq > aligned_reads.sam 
 
 ‘<read group info>' 即为1中定义的read分组信息，-M参数可以将BAM比对的short split 比对结果作为第二个比对信息。
 
-​	结果文件为 aligned_reads.sam，包含了输入文件的信息，基因组的比对信息。我们使用的命令行是将Pairend fastq，合并在一个文件中，在比对其他格式的文件中需要适当调整命令行，具体可以阅读BWA 的使用文档。
+	结果文件为 aligned_reads.sam，包含了输入文件的信息，基因组的比对信息。我们使用的命令行是将Pairend fastq，合并在一个文件中，在比对其他格式的文件中需要适当调整命令行，具体可以阅读BWA 的使用文档。
 
-​	3.转为BAM，排序和标记重复
+3.转为BAM，排序和标记重复
 
-​	这些预处理的操作过程是为了使数据适应GATK 工具。
+	这些预处理的操作过程是为了使数据适应GATK 工具。
 
-​	使用Picard将文件从SAM转为排序后BAM格式。
+	使用Picard将文件从SAM转为排序后BAM格式。
 
-```
-java -jar picard.jar SortSam \ 
-    INPUT=aligned_reads.sam \ 
-    OUTPUT=sorted_reads.bam \ 
-    SORT_ORDER=coordinate 
-```
+    java -jar picard.jar SortSam \ 
+        INPUT=aligned_reads.sam \ 
+        OUTPUT=sorted_reads.bam \ 
+        SORT_ORDER=coordinate 
 
-​	结果文件：sorted_reads.bam，此文件是根据位置坐标进行了排序，BAM文件是压缩后的文件，文件大小较SAM许多。
+	结果文件：sorted_reads.bam，此文件是根据位置坐标进行了排序，BAM文件是压缩后的文件，文件大小较SAM许多。
 
-​	使用Picard标记重复，命令如下：
+	使用Picard标记重复，命令如下：
 
-```
-java -jar picard.jar MarkDuplicates \ 
-    INPUT=sorted_reads.bam \ 
-    OUTPUT=dedup_reads.bam \
-    METRICS_FILE=metrics.txt
-```
+    java -jar picard.jar MarkDuplicates \ 
+        INPUT=sorted_reads.bam \ 
+        OUTPUT=dedup_reads.bam \
+        METRICS_FILE=metrics.txt
 
-​	结果文件：dedup_reads.bam，这个文件格式同输入文件，只是标记了重复的reads。同时产生一个统计文件mertics.txt。
+	结果文件：dedup_reads.bam，这个文件格式同输入文件，只是标记了重复的reads。同时产生一个统计文件mertics.txt。
 
-​	使用Picard对标记重复的BAM文件建立索引，命令如下：
+	使用Picard对标记重复的BAM文件建立索引，命令如下：
 
-```
-java -jar picard.jar BuildBamIndex \ 
-    INPUT=dedup_reads.bam 
-```
+    java -jar picard.jar BuildBamIndex \ 
+        INPUT=dedup_reads.bam 
 
-​	结果文件:dup_reads.bam.bai
+	结果文件:dup_reads.bam.bai
 
+2、碱基质量重新较准（Recalibrate Base）
+
+	变异检测算法非常依赖于每一条测序read中每一个碱基的质量值。质量分值来自于测序仪的对测序错误率的估计。不幸的是，机器产生的分数受到系统技术错误的各种来源的限制，从而导致数据过高或低估的基础质量得分。碱基质量值较准（BQSR,Base quality score recalibration）这个过程是通过机器学习的方法模拟错误经验，从而重新调整碱基质量值。这将使用我们得到更准确的质量值 ，从而提高变异检测的准确性。
+
+	碱基较准这一过程包括两步：首先基于数据和已知的变异位点（如果分析的物种没有你可以构建）构建协变分析模型，然后基于模型调整你的数据的碱基质量值 。
+
+	有一个可选但强烈推荐的步骤，建立第二次模型，并生成前后的散点图，以显示重新校准过程的影响。这对于质量控制目的是有用的。
+
+	不要将碱基较准与变异位点较准混淆，后者是后续应用于生成变异位点集的一种复杂过滤技术。
+
+1.分析测序数据的共变模式
+
+	命令如下：
+
+    java -jar GenomeAnalysisTK.jar \ 
+        -T BaseRecalibrator \ 
+        -R reference.fa \ 
+        -I input_reads.bam \ 
+        -L 20 \ 
+        -knownSites dbsnp.vcf \ 
+        -knownSites gold_indels.vcf \ 
+        -o recal_data.table
+
+	结果文件: recal_data.table, 包含了几个表，这些表的数据包含了相关的数据，接下来的步骤中将用于碱基质量的较准。
+
+	这一个过程必须提供已知的突变位点，否则程序不能运行，已知的突变位点是用于构建协变模型和估计经验碱基质量。对于研究的物种没有已知的变异位点如何处理可以查看GATK的在线文档说明。
+
+	-L 20 这里用到的，以及后面的例子中涉及到的，只是将分析限制到人基因组b37的第20号染色体，实际的分析中，需要做出调整。
+
+2.第二次的协变量分析
+
+	命令如下：
+
+    java -jar GenomeAnalysisTK.jar \ 
+        -T BaseRecalibrator \ 
+        -R reference.fa \ 
+        -I input_reads.bam \ 
+        -L 20 \ 
+        -knownSites dbsnp.vcf \ 
+        -knownSites gold_indels.vcf \ 
+        -BQSR recal_data.table \ 
+        -o post_recal_data.table 
+
+	结果：post_recal_data.table, -BQSR参数，是告诉GATK 基于第一个重新较准数据执行动态重新较准。
+
+3.生成较准前后的散点图
+
+	命令如下：
+
+    java -jar GenomeAnalysisTK.jar \ 
+        -T AnalyzeCovariates \ 
+        -R reference.fa \ 
+        -L 20 \ 
+        -before recal_data.table \
+        -after post_recal_data.table \
+        -plots recalibration_plots.pdf
+
+	结果：recalibration_plots.pdf, 图片展示碱基质量与通过BQSR生成的经验质量的匹配，前后的散点图，可以在真正应用碱基较准操作前，了碱基较准过程的作用。
+
+4.执行碱基质量重新较准
+
+	命令如下：
+
+    java -jar GenomeAnalysisTK.jar \ 
+        -T PrintReads \ 
+        -R reference.fa \ 
+        -I input_reads.bam \ 
+        -L 20 \ 
+        -BQSR recal_data.table \ 
+        -o recal_reads.bam
+
+	结果：recal_reads.bam, 文件包含了原来的read，但是现在具有精确的替换，插入缺失的质量分值 。默认情况下将丢弃原始的碱质量分值 ，但是可以通过参数增加 –emit_original_quals 在PrintReads 命令行中，输出原始的，标记为OQ。
+
+	这里我们用到了一个小工具,PrintReads , 当使用-BQSR参数时，GATK在读放原始的数据时，就已经在动态的较准碱基质量，但是输出到新的文件中需要PrintReads.
+
+三、变异检测（VAIRANT DISCOVER）
+
+	如果完成了上节的预处理过程，那么接下来可以进行变异检测过程，相对于参考基因组的某一个位点，测序样品中是一个突变位点，并且可以计算出这一位点每一个样品的基因型。由于一些观测到的变异位点是由于比对或测序的原因导致，这一过程最大的挑战是平衡敏感性和特异性的需求，敏感性就是最小化假阴性，检测出真正的变异位点，而特异性是指最小化假阳性，减少检测到假的变异。在一个过程中是很难同时解决这些问题，所以在变异检测这个过程中，分成了几个步骤：对于每个样品识别变异位点，针对于对列样品整合基因分型结果，变异位点的过滤。前两步是最大化的增加敏感性，而过滤的目的是对于不同的项目提供一个特异性水平。
+
+	这个工作流中，首先对分别每个样品使用HaplotypeCaller 的GVCF模式，产生一个GVCF(genomic VCF)的格式的文件，在整合基因分型的过程中，将多个样品的GVCF整合成一个多样品的VCF集合，这个集合后续可以用于过滤，从而平衡特异性与敏感性。这个过程产生的结果，同一般的整合流程，所有的样品都同时被用于变异位点的识别，但是它有更好的扩展性，并且解决了所谓的N+1问题。当然这种分析方法也可以用于小队列甚至是单个样品。
+
+	变异位点集合最好的过滤方法是使用变异质量分值较准（VQSR,variant quality score recalibration ）,这种方法使用机器学习方法来识别极可能是真正变异的数据集。这种复杂方法的缺点是需要一个大的数据集（至少是30个外显子样品，1个以上的基因组）和一个高效的已知变异位点集。这样子对于一些小的实验，RNA测序实验，和非模式生物就不合适，对于情况，还是使用硬过滤（Hard filtering）参数.
+
+1.识别变异位点（	Call Variants）
+
+	专门有于识别SNP或者INDEL的variant caller，比如GATK自己的UnifiedGenotyper ，两种变异类型都可以识别，但是必须调用不同的变异模型。但是HaplotypeCaller能够同时识别SNP和INDEL，通过局部组装活跃区的单倍型。当程序遇到某一个区域显示变异的信息时，它将会丢弃现有的比对信息，并且完全重新组装这一区域的read。这将使得HaplotypeCaller在遇到一般比较难以识别的区域时识别更加准确，比如这一个区域含有不同的变异类型，而且紧邻。这也使HaplotypeCaller比基于碱基位置识别INDEL的UnifiedGenotyper更好。
+
+	在DNA测序中，可以调用GVCF模式识别变异位点，HaplotypeCaller 分析每一个样品产生一个中间型的基因组vcf文件 GVCF, 可以非常有效的用于多样品基因分型的整合，能够高效的增加样品，可以扩展到非常大的队列，比如ExAC 92K 的外显子样品。
+
+	另外HaplotypeCaller可以用于处理非二倍体生物或者混合实验数据，但是它的算法不太适合极端等位基因型频率，所以不推荐用于检测体细胞突变，如果要检测体细胞，可以使用Mutect.
+
+1.选择分析的基本参数
+
+	如果你不指定分析参数，程序将提供默认参数。但是我们建议你明确设置它们，因为它将帮助您了解结果的界限，以及如何修改你的程序。
+
+	基因分型模式：--genotyping_mode
+
+	这个参数将决定用于分型的突变等位基因型，默认为DISCOVER，程序将输出分析数据最可能的突变基因型。在GENOTYPE_GIVEN_ALLELES 模式中，程序将只输出形成VCF文件时PASS类型的等位基因型。如果你想选择哪种是你感兴趣或者不感兴趣的基因型，这个参数将非常有用。
+
+	置信度阈值：-stand_emit_conf
+
+	最小置信度阈值，超过这个值程序才去判断此位点是否为可能的变异位异。
+
+	识别为变异位点的置信阈值：-stand_call_conf
+
+	最小阈值，超过这个值程序判断此位点为识别的变异位点。先通过stand_emit_conf，再通过stand_call_conf，低于此值的位点为filtered，并且标记为LowQual，高于此值表示通过了置信阈值,为called。
+
+2.识别变异位点
+
+	命令如下：
+
+    java -jar GenomeAnalysisTK.jar \ 
+        -T HaplotypeCaller \ 
+        -R reference.fa \ 
+        -I preprocessed_reads.bam \  
+        -L 20 \ 
+        --genotyping_mode DISCOVERY \ 
+        -stand_emit_conf 10 \ 
+        -stand_call_conf 30 \ 
+        -o raw_variants.vcf 
+
+	结果：raw_variants.vcf. VCF 格式，这个文件包含了HaplotypeCaller检测得到的所有潜在的变异位点，包括SNP和INDEL。
+
+	当你有多个样品时，使用多个-I参数，可以同时检测多个样品的变异位点，得到多个样品的变异位点集合。
+
+	现在得到的变异位点的集合，但是变异位点的检测过程没有结束。虽然这个集合中包含了called和filtered类型的变异，但是这个不能作为过滤的标准。GATK caller 在识别变异位点时条件非常宽松，所以使用推荐使用接下来的过滤方法（变异位点质量重新新较准VQSR和硬过滤），才会得到高质量的变异位点集。
+
+	3.GVCF模式
+
+	以上过程为一般的变异识别方式，现在GATK推荐使用的GVCF模式，命令行如下	： 
+
+    java -jar GenomeAnalysisTK.jar \
+    -T HaplotypeCaller \ 
+    -R reference.fa \ 
+    -I preprocessed_reads.bam \  
+    -L 20 \ 
+    --emitRefConfidence GVCF
+    --genotyping_mode DISCOVERY \ 
+    -stand_emit_conf 10 \ 
+    -stand_call_conf 30 \ 
+    -o raw_variants.g.vcf 
+
+	结果：raw_variants.g.vcf, 文件格式为GVCF，相比一般的检测方式，增加了参数--emitRefConfidence(简写-REC)。
+
+	当你一个样品有多个bam文件时，先合并bam文件，再生成一个GVCF
+
+	GATK版本低于3.4的，需要加入参数--variant_index_type LINEAR --variant_index_parameter 128000 ，这样可以正确设置gvcf文件的索引。
+
+2.合并GVCF
+
+	合并GVCF文件这个过程是可选的，而且只对于DNA分析工作流。它将多个GVCF合并为一个GVCF格式的文件，减少下一过程的输入文件。只在你处理上百个样品时有必要，这不等同于整合基因分型。合并文件的数量依赖于硬件条件设施，当数量在10-200个时运行非常好。
+
+1.合并GVCF文件
+
+	命令如下：
+
+     java -jar GenomeAnalysisTK.jar \
+       -T CombineGVCFs \
+       -R reference.fasta \
+       --variant sample1.g.vcf \
+       --variant sample2.g.vcf \
+       -o cohort.g.vcf
+
+	结果：cohort.g.vcf
+
+	输入文件为两个以上的GVCF文件，此格式文件只能是GATK HaplotypeCaller或者CombineGVCFs产生的，其他程序产生的也可能叫GVCF，但不能使用。如果GVCF文件包含等位基因型的注释，需要加入参数-G Standard -G AS_Standard.
+
+3.整合基因分型
+
+	这一过程是整合所有样品的GVCF文件或者合并后的GVCF文件用于基因分型，使用的工具为GenotypeVCFs。生成包含识别后的INDEL或SNP文件，用于后续的过滤。这种分析方法使得在一些较难的位点也能够灵敏的检测变异位点，生成一个基因分型矩阵，包含所有样品在所有位点中的信息。
+
+1.整合基因分型
+
+	命令如下：
+
+    java -jar GenomeAnalysisTK.jar \
+       -T GenotypeGVCFs \
+       -R reference.fasta \
+       --variant sample1.g.vcf \
+       --variant sample2.g.vcf \
+       -o output.vcf
+
+	结果：output.vcf
+
+	输入文件为GVCF文件，此格式文件只能是GATK HaplotypeCaller或者CombineGVCFs产生的，其他程序产生的也可能叫GVCF，但不能使用。如果GVCF文件包含等位基因型的注释，需要加入参数-G Standard -G AS_Standard.
+
+4.过滤变异位点
+
+	GATK变异识别设计之初，为实现高度的敏感，所以识别变异的条件设计的非常宽松。为了减少假阳性，后续将需要过滤原始的变异位点集合。
+
+	过滤最好的方法是使用变异位点质量分值重新较准（VQSR）,这种方法利用机器学习来识别最有可能为真实的变异位点，给每一个变异位点分配一个VQSLOD值，这个值比识别器（caller）给出的变异位点分值更加可靠。共分为两个步骤，第一步是基于训练数据集建立一个模型，然后利用模型得到每一个变异位点的较准好的概率值；第二步中使用变异质量分值过滤原始的变异位点集合，这样就产生了一个满足我们所需水平的变异位点子集，从而达到敏感性和特异性的平衡。
+
+	重新较准的方法需要高质量的已知的变异位点集作为训练集和真实数据源，这样子对很多物种不太可行。它也需要大量的数据集来学习好的和坏的变异位点的概况，所以在小样品量或者目标区域测序，RNA测序或者非模式生物中不太可行。如果因为这些原因不能使用VQSR，那么可以使用硬过滤。
+
+1.VQSR使用
+
+1.准备SNP的重新较准参数	
+
+a.确定程序所需要的用于构建重新较准模型的数据源
+
+True sites training resource: HapMap
+
+这个已经被验证过的SNP数据集作为真实且非常高可信的数据源，程序将认为这些位点代表真实的变异（truth=true）,并且用它们训练较准模型（training=true）.在后面也利用这些位点基于真实位点的敏感性选择一个过滤阈值。先验概率值(prior likehood) 设置为Q15(96.84%)
+
+True sites training resource: Omni
+
+这个数据源是OMNI数据库的多态性SNP位点集。使用同HapMap。程序将认为这些位点代表真实的变异（truth=true）,并且用它们训练较准模型（training=true）。先验概率值(prior likehood) 设置为Q12(93.69%)
+
+Non-true sites training resource: 1000G
+
+这个数据源是1000 genome产生的高可信度的SNP集。程序将认为这些位点包含了真实的变异位点，但同时也有假阳性的位点（truth=false）,并且用它们训练较准模型（training=true）。先验概率值(prior likehood) 设置为Q10(90%) 。
+
+Known sites resource, not used in training: dbSNP
+
+这个数据源是一个没有经过验证的高可信度的SNP集（truth=false）。程序不用它们训练较准模型（training=false）。但是程序利用这些数据通过判断有无出现在dbSNP中分层输出的指标，如Ti/Tv值。先验概率值(prior likehood) 设置为Q2(36.90%) 。
+
+其他变异位点的先验概率值(prior likehood) 设置为Q2(36.90%)。这个低的阈值也反应了GATK caller 生成一个大的，高敏感的变异集合，那么就需要后续大量过滤。
+
+b.确定程序用于评估真实SNP似然值的注释参数
+
+这些注释内容包含在每一个变异位点的信息中，如果一些注释内容缺失，可以使用VariantAnnotator 工具增加。
+
+- Coverage (DP)
+
+位点覆盖的总深度。不能用于外显子数据中，因为目标区域捕获测序中，测序深度存在非常大的变化。在全基因组测序中这种极大的变化是一种错误的指标，而在外显子测序中不是。
+
+- QualByDepth (QD)
+
+Variant confidence (from the QUAL field) / unfiltered depth of non-reference samples.
+
+- FisherStrand (FS)
+
+评估方向的偏好性，具有偏好性的位点可能是假的位点。补充SOR。
+
+- StrandOddsRatio (SOR)
+
+评估方向的偏好性，具有偏好性的位点可能是假的位点。补充FS。
+
+- MappingQualityRankSumTest (MQRankSum)
+
+比对质量的秩和检验。只有同时具有参考基因型支持的read和突变基因型支持read的位点才能进行秩和检测。
+
+- ReadPosRankSumTest (ReadPosRankSum)
+
+距reads末端距离的秩和检验。如果一个突变基因型只出现在reads末端附近，这可能是一个假的变异。只有同时具有参考基因型支持的read和突变基因型支持read的位点才能进行秩和检测。
+
+- RMSMappingQuality (MQ)
+
+评估支持一个变异位点的所有reads的比对质量值。
+
+- InbreedingCoeff
+
+这个是一个群体水平的参数，至少需要10个样品才能计算，对于样品数据比较少的项目，或者亲缘关系较近的样品，不能使用这个参数。
+
+c. 确定程序用于分层的期望的敏感性阈值水平
+
+- 
+- First tranche threshold 100.0
+- Second tranche threshold 99.9
+- Third tranche threshold 99.0
+- Fourth tranche threshold 90.0
+- First tranche threshold 100.0
+- Second tranche threshold 99.9
+- Third tranche threshold 99.0
+- Fourth tranche threshold 90.0
+
+First tranche threshold 100.0
+
+Second tranche threshold 99.9
+
+Third tranche threshold 99.0
+
+Fourth tranche threshold 90.0
+
+分层实质是依据设定的阈值根据VQSLOD对变异位点分块。这些阈值本身就涉及到敏感性。最小值分层表示具有很高的特异性，但是敏感性较低（低的假阳性，但是高的假阴性）。
+
+2.建立SNP重新较准模型
+
+命令如下：
+
+    java -jar GenomeAnalysisTK.jar \ 
+        -T VariantRecalibrator \ 
+        -R reference.fa \ 
+        -input raw_variants.vcf \ 
+        -resource:hapmap,known=false,training=true,truth=true,prior=15.0 hapmap.vcf \ 
+        -resource:omni,known=false,training=true,truth=true,prior=12.0 omni.vcf \ 
+        -resource:1000G,known=false,training=true,truth=false,prior=10.0 1000G.vcf \ 
+        -resource:dbsnp,known=true,training=false,truth=false,prior=2.0 dbsnp.vcf \ 
+        -an DP \ 
+        -an QD \ 
+        -an FS \ 
+        -an SOR \ 
+        -an MQ \
+        -an MQRankSum \ 
+        -an ReadPosRankSum \ 
+        -an InbreedingCoeff \
+        -mode SNP \ 
+        -tranche 100.0 -tranche 99.9 -tranche 99.0 -tranche 90.0 \ 
+        -recalFile recalibrate_SNP.recal \ 
+        -tranchesFile recalibrate_SNP.tranches \ 
+        -rscriptFile recalibrate_SNP_plots.R 
+
+结果：产生多个文件，最重要的文件是较准报告文件recalibrate_SNP.recal，包含了重新较准数据，这也是下一下程序用于生成vcf结果的文件。另外一个文件recalibrate_SNP.tranches，包含了对应命令行中分层参数的质量分值阈值水平。如果安装了R和其他所需要的R包，也可以生成一些散点图，这些图展示了变异位点在较准模型某些维度的分布。
+
+3.应用期望的较准水平于变异位点集中的SNP
+
+命令行如下：
+
+    java -jar GenomeAnalysisTK.jar \ 
+        -T ApplyRecalibration \ 
+        -R reference.fa \ 
+        -input raw_variants.vcf \ 
+        -mode SNP \ 
+        --ts_filter_level 99.0 \ 
+        -recalFile recalibrate_SNP.recal \ 
+        -tranchesFile recalibrate_SNP.tranches \ 
+        -o recalibrated_snps_raw_indels.vcf  
+
+结果：recalibrated_snps_raw_indels.vcf，一个新的VCF文件，包含了原始文件中所有的变异位点，但是这些SNP位点是通过VQSLOD注释的，并且PASS或者FILTER 依赖于选择的分层阈值。
+
+在命令中使用了倒数第二个分层阈值，我们的数据要满足99%的敏感性水平。如果你想得到更多的特异性位点（低的假阳性），你可以选择最低的分层阈值，如果想得到更高的敏感性（高假阳性），可以选择更高的分层阈值。我们推荐使用第二高的分层阈值（99.9%），得到最高的敏感性和可以接受的特异性
+
+4.准备INDEL的重新较准参数
+
+a.确定程序所需要的用于构建重新较准模型的数据源
+
+Known and true sites training resource: Mills
+
+这是一个已经被验证过的高可信度的INDEL数据集。程序将认为这些位点代表真实的变异（truth=true）,并且用它们训练较准模型（training=true）。先验概率值(prior likehood) 设置为Q12(93.69%)
+
+Known sites resource, not used in training: dbSNP
+
+这个数据源是一个没有经过验证的高可信度的SNP集（truth=false）。程序不用它们训练较准模型（training=false）。但是程序利用这些数据通过判断有无出现在dbSNP中分层输出的指标，如Ti/Tv值。先验概率值(prior likehood) 设置为Q2(36.90%) 。
+
+	其他变异位点的先验概率值(prior likehood) 设置为Q2(36.90%)。
+
+b.确定程序用于评估真实INDEL似然值的注释参数
+
+	同SNP
+
+c. 确定程序用于分层的期望的敏感性阈值水平
+
+	同SNP
+
+d. Determine additional model parameters
+
+	Maximum number of Gaussians (-maxGaussians) 4
+
+	如果数据集包含了大量的变异位点，只能增加最大值的设置
+
+5.建立INDEL重新较准模型
+
+	命令行如下：
+
+    java -jar GenomeAnalysisTK.jar \ 
+        -T VariantRecalibrator \ 
+        -R reference.fa \ 
+        -input recalibrated_snps_raw_indels.vcf \ 
+        -resource:mills,known=false,training=true,truth=true,prior=12.0 Mills_and_1000G_gold_standard.indels.b37.sites.vcf \
+        -resource:dbsnp,known=true,training=false,truth=false,prior=2.0 dbsnp.b37.vcf \
+        -an QD \
+        -an DP \ 
+        -an FS \ 
+        -an SOR \ 
+        -an MQRankSum \ 
+        -an ReadPosRankSum \ 
+        -an InbreedingCoeff
+        -mode INDEL \ 
+        -tranche 100.0 -tranche 99.9 -tranche 99.0 -tranche 90.0 \ 
+        --maxGaussians 4 \ 
+        -recalFile recalibrate_INDEL.recal \ 
+        -tranchesFile recalibrate_INDEL.tranches \ 
+        -rscriptFile recalibrate_INDEL_plots.R
+
+	结果：同SNP，最重要的为recalibrate_INDEL.recal
+
+6.应用期望的较准水平于变异位点集中的INDEL
+
+	命令如下：
+
+    java -jar GenomeAnalysisTK.jar \ 
+        -T ApplyRecalibration \ 
+        -R reference.fa \ 
+        -input recalibrated_snps_raw_indels.vcf \ 
+        -mode INDEL \ 
+        --ts_filter_level 99.0 \ 
+        -recalFile recalibrate_INDEL.recal \ 
+        -tranchesFile recalibrate_INDEL.tranches \ 
+        -o recalibrated_variants.vcf 
+
+	结果：recalibrated_variants.vcf 。
+
+	同SNP。
+
+	对于外显子捕获实验，在我们的实验中，为达到最佳的外显子结果，样品数至少是30个。如果样品数较少可以给出几个选择。增加测序样品或者使用公共数据库中外显子的bam文件，如1000 genome。当你的数据集较小时，可以使用参数--maxGaussians 4。如果你分析的是非模式生物，没有可用的基因组或者外显子数据时，你只能这么做。
+
+2.硬过滤（Hard filters）
+
+1.从变异集合中提取SNP
+
+	命令行如下：
+
+    java -jar GenomeAnalysisTK.jar \ 
+        -T SelectVariants \ 
+        -R reference.fa \ 
+        -V raw_variants.vcf \ 
+        -selectType SNP \ 
+        -o raw_snps.vcf 
+
+	结果：raw_snps.vcf , 只包含SNP变异位点。
+
+2.确定SNP过滤参数
+
+	SNPs 匹配任意一个过滤条件，则被认为是bad和filtered, 并标记为FILTER 在结果文件中。程序将指定排除此SNP的主要负责参数。不符合这些过滤条件的SNP，被标记为PASS
+
+- QualByDepth (QD) 2.0
+
+This is the variant confidence (from the QUAL field) divided by the unfiltered depth of non-reference samples.
+
+- FisherStrand (FS) 60.0
+
+评估方向的偏好性，具有偏好性的位点可能是假的位点。值越高表示偏好性越强。补充SOR。
+
+- StrandOddsRatio (SOR) 3.0
+
+评估方向的偏好性，具有偏好性的位点可能是假的位点。值越高表示偏好性越强。补充FS。
+
+- MappingQualityRankSumTest (MQRankSum) -12.5
+
+比对质量的秩和检验。只有同时具有参考基因型支持的read和突变基因型支持read的位点才能进行秩和检测。
+
+- ReadPosRankSumTest (ReadPosRankSum) -8.0
+
+距reads末端距离的秩和检验。如果一个突变基因型只出现在reads末端附近，这可能是一个假的变异。只有同时具有参考基因型支持的read和突变基因型支持read的位点才能进行秩和检测。
+
+- RMSMappingQuality (MQ) 40.0
+
+评估支持一个变异位点的所有reads的比对质量值。
+
+3.应用过滤于SNP
+
+	命令如下：
+
+    java -jar GenomeAnalysisTK.jar \ 
+        -T VariantFiltration \ 
+        -R reference.fa \ 
+        -V raw_snps.vcf \ 
+        --filterExpression "QD < 2.0 || FS > 60.0 || MQ < 40.0 || MQRankSum < -12.5 || ReadPosRankSum < -8.0" \ 
+        --filterName "my_snp_filter" \ 
+        -o filtered_snps.vcf
+
+	结果：filtered_snps.vcf, 包含原始的SNP位点，现在已经被注释为PASS 和FILTER。
+
+	对于FILTER的SNP ,也可以通过不同的命名作出区分表示不同的过滤原因，可以通过SelectVariants 工具进一步的分析。
+
+4.从变异集合中提取INDEL
+
+	命令行如下：
+
+    java -jar GenomeAnalysisTK.jar \ 
+        -T SelectVariants \ 
+        -R reference.fa \ 
+        -V raw_HC_variants.vcf \ 
+        -selectType INDEL \ 
+        -o raw_indels.vcf 
+
+	结果：raw_indels.vcf
+
+5.确定INDEL过滤参数
+
+- QualByDepth (QD) 2.0
+
+- FisherStrand (FS) 200.0
+- ReadPosRankSumTest (ReadPosRankSum) 20.0
+
+- StrandOddsRatio (SOR) 10.0
+
+6.应用过滤于INDEL
+
+    java -jar GenomeAnalysisTK.jar \ 
+        -T VariantFiltration \ 
+        -R reference.fa \ 
+        -V raw_indels.vcf \ 
+        --filterExpression "QD < 2.0 || FS > 200.0 || ReadPosRankSum < -20.0" \ 
+        --filterName "my_indel_filter" \ 
+        -o filtered_indels.vcf 
+
+结果：filtered_indels.vcf
+
+同SNP.
